@@ -7,7 +7,14 @@ type BD_ATTENDANCE = {
 }
 
 type USER_ID = string
-type USER = string
+type USER = {
+    id: string,
+    username: string,
+    realName: string
+    startDate: Date | null,
+    rowIndex: number,
+    include: boolean
+}
 
 type USER_INFORMATION = Map<USER_ID, USER>
 type AO_INFORMATION = Map<string, AO>

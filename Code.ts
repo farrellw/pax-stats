@@ -4,18 +4,93 @@ function onOpen() {
     var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     var menus = [
         {
-            name: "Step 1: Populate Dates",
+            name: "Populate Dates",
             functionName: "populateDates"
         }, {
-            name: "Step 2: Populate Attendance",
+            name: "Populate Attendance",
             functionName: "populateAttendance"
+        }, {
+            name: "Refresh User List",
+            functionName: "refreshUserList"
         },
+        {
+            name: "Set Rule",
+            functionName: "populateStats"
+        }
     ];
     spreadsheet.addMenu("F3", menus);
 };
 
+function refreshUserList() {
+    var passwordMaybe = PropertiesService.getScriptProperties().getProperty('pw');
+    var userMaybe = PropertiesService.getScriptProperties().getProperty('user');
+
+    if (!userMaybe || !passwordMaybe) {
+        userMaybe = "GoingToFail"
+        passwordMaybe = "GoingToFail"
+    }
+
+    var conn = Jdbc.getConnection('jdbc:mysql://f3stlouis.cac36jsyb5ss.us-east-2.rds.amazonaws.com:3306/f3stlcity', userMaybe, passwordMaybe);
+
+    const stmt = conn.createStatement();
+    stmt.setMaxRows(500);
+    const results = stmt.executeQuery("SELECT * FROM users");
+
+    const userMap = retrieveUserMap()
+
+    const userIdIndex = 1;
+    const userNameIndex = 2;
+    const realNameIndex = 3;
+
+    var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    var today = new Date()
+
+    var sheet = spreadsheet.getSheetByName("USER")
+    if (sheet) {
+        var data = sheet.getDataRange().getValues()
+        var dataLength = data.length
+
+        var peopleAdded = 0
+
+        while (results.next()) {
+            let userId = results.getString(userIdIndex);
+            let userName = results.getString(userNameIndex);
+            let realName = results.getString(realNameIndex);
+            let maybeFoundUser = userMap.get(userId)
+
+            if (maybeFoundUser) {
+                var row = data.find(y => y[0] == userId)
+                if (row) {
+                    rowNum = data.indexOf(row) + 1
+                    if (userName != maybeFoundUser.username) {
+                        sheet.getRange(rowNum, 2)
+                            .setValues([[
+                                userName
+                            ]])
+                    }
+                    if (realName != maybeFoundUser.realName) {
+                        sheet.getRange(rowNum, 3)
+                            .setValues([[
+                                realName
+                            ]])
+                    }
+                }
+            } else {
+                peopleAdded += 1
+                var rowNum = peopleAdded + dataLength
+                sheet.getRange(rowNum, 1, 1, 5).setValues([[
+                    userId, userName, realName, new Date(today.getFullYear(), today.getMonth(), today.getDay()), "YES"
+                ]])
+            }
+        }
+    }
+
+    results.close();
+    stmt.close();
+}
+
 function populateStats(): void {
-    const startingDatesColumnNum = 8
+    const startingDatesColumnNum = 7
 
     var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     spreadsheet.getSheets().forEach(x => {
@@ -46,7 +121,7 @@ function populateDates(): void {
 
     if (sheet) {
         var regionData = sheet.getDataRange().getValues();
-        for (var i = 7; i >= 0; i--) {
+        for (var i = 3; i >= 0; i--) {
             let currentDate = new Date();
             // if (currentDate.getDate() - i >= 0) {
             currentDate.setDate(currentDate.getDate() - i);
@@ -122,11 +197,11 @@ function retrieveBB(): BD_ATTENDANCE_MAP {
 
     var conn = Jdbc.getConnection('jdbc:mysql://f3stlouis.cac36jsyb5ss.us-east-2.rds.amazonaws.com:3306/f3stlcity', userMaybe, passwordMaybe);
     const start = new Date();
-    start.setDate(start.getDate() - 24);
+    start.setDate(start.getDate() - 3);
     const dateFormatted = Utilities.formatDate(start, 'GMT', 'YYYY-MM-dd')
 
     const stmt = conn.createStatement();
-    stmt.setMaxRows(600);
+    stmt.setMaxRows(150);
     const results = stmt.executeQuery("SELECT * FROM bd_attendance WHERE date > '" + dateFormatted + "'");
 
     const bdDateIndex = 3;
@@ -202,18 +277,25 @@ function retrieveAOMap(): AO_INFORMATION {
     }
 }
 
-function retrieveUserMap(): Map<string, string> {
-    var userMap = new Map<string, string>()
+function retrieveUserMap(): USER_INFORMATION {
+    var userMap = new Map<string, USER>()
 
     var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = spreadsheet.getSheetByName("USER")
     if (sheet) {
         var values = sheet.getDataRange().getValues();
 
-        return values.reduce((acc: Map<string, string>, currentValue: any[]): Map<string, string> => {
-            if (currentValue[2] == "YES") {
-                acc.set(currentValue[0], currentValue[1])
+        return values.reduce((acc: Map<string, USER>, currentValue: any[], currentIndex): Map<string, USER> => {
+            acc.set(currentValue[0], {
+                id: currentValue[0],
+                username: currentValue[1],
+                realName: currentValue[2],
+                startDate: currentValue[3] ? new Date(currentValue[3]) : null,
+                rowIndex: currentIndex,
+                include: currentValue.length > 4 ? currentValue[4] : false
             }
+            )
+
             return acc
         }, userMap)
     } else {
@@ -228,7 +310,7 @@ function populateUserMap(): void {
     spreadsheet.getSheetByName("USER_LIST")
 }
 
-function populateRegion(bdAttendance: BD_ATTENDANCE_MAP, userMap, aoMap): void {
+function populateRegion(bdAttendance: BD_ATTENDANCE_MAP, userMap: USER_INFORMATION, aoMap): void {
     var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = spreadsheet.getSheetByName("REGION")
     var peopleAdded = 0
@@ -238,39 +320,49 @@ function populateRegion(bdAttendance: BD_ATTENDANCE_MAP, userMap, aoMap): void {
         Logger.log(JSON.stringify(bdAttendance))
 
         bdAttendance.forEach((x, key) => {
-            var row = data.find(y => y[0] == key)
-            var rowNum;
-            if (!row) {
-                peopleAdded += 1
-                rowNum = peopleAdded + dataLength
-            } else {
-                rowNum = data.indexOf(row) + 1
-            }
+            var user = userMap.get(key)
+            if (user?.include) {
+                var row = data.find(y => y[0] == key)
+                var rowNum;
+                if (!row) {
+                    peopleAdded += 1
+                    rowNum = peopleAdded + dataLength
+                } else {
+                    rowNum = data.indexOf(row) + 1
+                }
 
-            if (!row) {
-                sheet?.getRange(rowNum, 1, 1, 6)
-                    .setValues([[
-                        key,
-                        userMap.get(key),
-                        "",
-                        "=COUNTIF(H" + rowNum + ":ZZ" + rowNum + ",\"?*\")",
-                        "=COUNTIF(H" + rowNum + ":BK" + rowNum + ",\"?*\") / 8",
-                        "=COUNTIF(H" + rowNum + ":U" + rowNum + ",\"?*\") / 2"
-                    ]])
-            }
-
-            x.forEach(bb => {
-                var col = data[0].indexOf(bb.date);
-
-                if (col != -1) {
-                    if (aoMap.get(bb.ao)) {
-                        sheet?.getRange(rowNum, col + 1)
+                if (!row) {
+                    sheet?.getRange(rowNum, 1, 1, 6)
+                        .setValues([[
+                            key,
+                            userMap.get(key) ? userMap.get(key)?.username : "",
+                            "",
+                            "=COUNTIF(H" + rowNum + ":ZZ" + rowNum + ",\"?*\")",
+                            "=COUNTIF(H" + rowNum + ":BK" + rowNum + ",\"?*\") / 8",
+                            "=COUNTIF(H" + rowNum + ":U" + rowNum + ",\"?*\") / 2"
+                        ]])
+                } else {
+                    if (row[0] && (!row[1] || row[1] != userMap.get(key)?.username)) {
+                        sheet?.getRange(rowNum, 2)
                             .setValues([[
-                                aoMap.get(bb.ao).shortcutName
+                                userMap.get(key)?.username
                             ]])
                     }
                 }
-            })
+
+                x.forEach(bb => {
+                    var col = data[0].indexOf(bb.date);
+
+                    if (col != -1) {
+                        if (aoMap.get(bb.ao)) {
+                            sheet?.getRange(rowNum, col + 1)
+                                .setValues([[
+                                    aoMap.get(bb.ao).shortcutName
+                                ]])
+                        }
+                    }
+                })
+            }
         })
     } else {
         var ui = SpreadsheetApp.getUi();
@@ -352,7 +444,7 @@ function populateAttendance(): void {
     populateRegion(bdAttendance, userMap, aoMap)
 
     aoMap.forEach((val, key) => {
-        Logger.log("Here is hte AO map")
+        Logger.log("Here is the AO map")
         var sheet = spreadsheet.getSheetByName(val.friendlyName)
 
         if (sheet) {
