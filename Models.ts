@@ -4,6 +4,7 @@ type BD_ATTENDANCE = {
     date: string,
     user: string,
     ao: string,
+    qUser: string
 }
 
 type USER_ID = string

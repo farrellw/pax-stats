@@ -1,5 +1,5 @@
-// Pax stats highlight rule
 // Pax totals page ( tarmac )
+
 function onOpen() {
     var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     var menus = [
@@ -14,12 +14,34 @@ function onOpen() {
             functionName: "refreshUserList"
         },
         {
-            name: "Set Rule",
-            functionName: "populateStats"
+            name: "Sort",
+            functionName: "sortAll"
         }
     ];
     spreadsheet.addMenu("F3", menus);
+
+    var adminHelperMenu = [
+        {
+            name: "setRule",
+            functionName: "setRule"
+        }
+    ]
+
+    spreadsheet.addMenu("ADMIN-F3", adminHelperMenu);
 };
+
+function sortAll() {
+    var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+    var sheet = spreadsheet.getSheetByName("REGION")
+    sheet?.sort(2)
+    const aoMap = retrieveAOMap()
+
+    aoMap.forEach((val, key) => {
+        var aoSheet = spreadsheet.getSheetByName(val.friendlyName)
+        aoSheet?.sort(5, false)
+    })
+}
 
 function refreshUserList() {
     var passwordMaybe = PropertiesService.getScriptProperties().getProperty('pw');
@@ -89,14 +111,13 @@ function refreshUserList() {
     stmt.close();
 }
 
-function populateStats(): void {
-    const startingDatesColumnNum = 7
+function setRule(): void {
+    const startingDatesColumnNum = 8
 
     var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     spreadsheet.getSheets().forEach(x => {
         // Add rule based formatting
-        var range = x.getRange(3, startingDatesColumnNum, 1000, 30 - startingDatesColumnNum)
-
+        var range = x.getRange(3, startingDatesColumnNum, 1000, 29)
         // Rule that turns anything in the range with a value to green.
         var rule = SpreadsheetApp.newConditionalFormatRule()
             .whenCellNotEmpty()
@@ -104,10 +125,18 @@ function populateStats(): void {
             .setRanges([range])
             .build()
 
+        // Rule that turns anything in the range with a value to green.
+        var ruleTwo = SpreadsheetApp.newConditionalFormatRule()
+            .whenCellEmpty()
+            .setBackground("#ffcccb")
+            .setRanges([range])
+            .build()
+
+
         var rules: GoogleAppsScript.Spreadsheet.ConditionalFormatRule[] = []
         rules.push(rule);
+        rules.push(ruleTwo)
         x.setConditionalFormatRules(rules);
-
     })
 }
 
@@ -130,7 +159,7 @@ function populateDates(): void {
             var anotherCol = regionData[0].indexOf(formattedColumnName);
 
             if (col == -1 && anotherCol == -1) {
-                sheet.insertColumnAfter(startingDatesColumnNum - 1);
+                sheet.insertColumnBefore(startingDatesColumnNum);
                 sheet.getRange(1, startingDatesColumnNum)
                     .setValues([[
                         formattedColumnName
@@ -141,7 +170,7 @@ function populateDates(): void {
                         true, true, true, true, null, null,
                         null,
                         SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
-                sheet.getRange(2, startingDatesColumnNum).setValues([["=COUNTIF(H3:H1000,\"?*\")"]])
+                sheet.getRange(2, startingDatesColumnNum).setValues([["=COUNTIF(H3:H,\"?*\")"]])
             }
         }
     } else {
@@ -201,12 +230,14 @@ function retrieveBB(): BD_ATTENDANCE_MAP {
     const dateFormatted = Utilities.formatDate(start, 'GMT', 'YYYY-MM-dd')
 
     const stmt = conn.createStatement();
-    stmt.setMaxRows(150);
-    const results = stmt.executeQuery("SELECT * FROM bd_attendance WHERE date > '" + dateFormatted + "'");
+    stmt.setMaxRows(500);
+    // const results = stmt.executeQuery("SELECT * FROM bd_attendance WHERE date > '" + dateFormatted + "'");
+    const results = stmt.executeQuery("SELECT * FROM bd_attendance WHERE date > '2022-07-30' AND date < '2022-08-12'");
 
     const bdDateIndex = 3;
     const userIndex = 1;
     const aoIndex = 2;
+    const qUserIndex = 4;
 
     let bd_attendance: BD_ATTENDANCE_MAP = new Map<USER_ID, BD_ATTENDANCE[]>()
 
@@ -216,6 +247,7 @@ function retrieveBB(): BD_ATTENDANCE_MAP {
 
         let user = results.getString(userIndex);
         let ao = results.getString(aoIndex);
+        let qUserId = results.getString(qUserIndex)
 
         let res = bd_attendance.get(user)
         if (res) {
@@ -223,6 +255,7 @@ function retrieveBB(): BD_ATTENDANCE_MAP {
                 date: formattedColumnName,
                 user: user,
                 ao: ao,
+                qUser: qUserId
             })
             bd_attendance.set(user, res)
         } else {
@@ -231,6 +264,7 @@ function retrieveBB(): BD_ATTENDANCE_MAP {
                     date: formattedColumnName,
                     user: user,
                     ao: ao,
+                    qUser: qUserId
                 }
             ])
         }
@@ -314,15 +348,17 @@ function populateRegion(bdAttendance: BD_ATTENDANCE_MAP, userMap: USER_INFORMATI
     var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = spreadsheet.getSheetByName("REGION")
     var peopleAdded = 0
-    var data = spreadsheet.getDataRange().getValues();
-    var dataLength = data.length
     if (sheet) {
-        Logger.log(JSON.stringify(bdAttendance))
+        var data = sheet.getDataRange().getValues();
+        var dataLength = data.length
 
         bdAttendance.forEach((x, key) => {
             var user = userMap.get(key)
             if (user?.include) {
-                var row = data.find(y => y[0] == key)
+                var row = data.find(y => {
+                    return y[0] == key
+                })
+
                 var rowNum;
                 if (!row) {
                     peopleAdded += 1
@@ -337,9 +373,9 @@ function populateRegion(bdAttendance: BD_ATTENDANCE_MAP, userMap: USER_INFORMATI
                             key,
                             userMap.get(key) ? userMap.get(key)?.username : "",
                             "",
-                            "=COUNTIF(H" + rowNum + ":ZZ" + rowNum + ",\"?*\")",
-                            "=COUNTIF(H" + rowNum + ":BK" + rowNum + ",\"?*\") / 8",
-                            "=COUNTIF(H" + rowNum + ":U" + rowNum + ",\"?*\") / 2"
+                            "=COUNTIF(INDIRECT(TEXT(CONCATENATE(ADDRESS(ROW(),8,3),\":\",ADDRESS(ROW(),63,3)),1)),\"Q?*\")",
+                            "=COUNTIF(INDIRECT(TEXT(CONCATENATE(ADDRESS(ROW(),8,3),\":\",ADDRESS(ROW(),63,3)),1)),\"?*\")",
+                            "=COUNTIF(INDIRECT(TEXT(CONCATENATE(ADDRESS(ROW(),8,3),\":\",ADDRESS(ROW(),21,3)),1)),\"?*\")",
                         ]])
                 } else {
                     if (row[0] && (!row[1] || row[1] != userMap.get(key)?.username)) {
@@ -355,10 +391,17 @@ function populateRegion(bdAttendance: BD_ATTENDANCE_MAP, userMap: USER_INFORMATI
 
                     if (col != -1) {
                         if (aoMap.get(bb.ao)) {
-                            sheet?.getRange(rowNum, col + 1)
-                                .setValues([[
-                                    aoMap.get(bb.ao).shortcutName
-                                ]])
+                            if (bb.qUser == bb.user) {
+                                sheet?.getRange(rowNum, col + 1)
+                                    .setValues([[
+                                        "Q-" + aoMap.get(bb.ao).shortcutName
+                                    ]]).setHorizontalAlignment("center")
+                            } else {
+                                sheet?.getRange(rowNum, col + 1)
+                                    .setValues([[
+                                        aoMap.get(bb.ao).shortcutName
+                                    ]]).setHorizontalAlignment("center")
+                            }
                         }
                     }
                 })
@@ -370,19 +413,22 @@ function populateRegion(bdAttendance: BD_ATTENDANCE_MAP, userMap: USER_INFORMATI
     }
 }
 
-function statFormulaFromAO(ao: AO): Map<number, string> {
+function statFormulaFromAO(ao: AO, rowNum): Map<number, string> {
     var BD_PER_WEEK_TO_FORMULA = {
         1: {
-            2: "=COUNTIF(H3:I3,\"?*\") / 2",
-            8: "=COUNTIF(H3:O3,\"?*\") / 8"
+            2: "=COUNTIF(INDIRECT(TEXT(CONCATENATE(ADDRESS(ROW(),8,3),\":\",ADDRESS(ROW(),9,3)),1)),\"?*\")",
+            8: "=COUNTIF(INDIRECT(TEXT(CONCATENATE(ADDRESS(ROW(),8,3),\":\",ADDRESS(ROW(),14,3)),1)),\"?*\")",
+            q: "=COUNTIF(INDIRECT(TEXT(CONCATENATE(ADDRESS(ROW(),8,3),\":\",ADDRESS(ROW(),14,3)),1)),\"Q\")"
         },
         2: {
-            2: "=COUNTIF(H3:K3,\"?*\") / 2",
-            8: "=COUNTIF(H3:W3,\"?*\") / 8"
+            2: "=COUNTIF(INDIRECT(TEXT(CONCATENATE(ADDRESS(ROW(),8,3),\":\",ADDRESS(ROW(),11,3)),1)),\"?*\")",
+            8: "=COUNTIF(INDIRECT(TEXT(CONCATENATE(ADDRESS(ROW(),8,3),\":\",ADDRESS(ROW(),21,3)),1)),\"?*\")",
+            q: "=COUNTIF(INDIRECT(TEXT(CONCATENATE(ADDRESS(ROW(),8,3),\":\",ADDRESS(ROW(),21,3)),1)),\"Q\")",
         },
         3: {
-            2: "=COUNTIF(H3:M3,\"?*\") / 2",
-            8: "=COUNTIF(H3:AE3,\"?*\") / 8"
+            2: "=COUNTIF(INDIRECT(TEXT(CONCATENATE(ADDRESS(ROW(),8,3),\":\",ADDRESS(ROW(),13,3)),1)),\"?*\")",
+            8: "=COUNTIF(INDIRECT(TEXT(CONCATENATE(ADDRESS(ROW(),8,3),\":\",ADDRESS(ROW(),31,3)),1)),\"?*\")",
+            q: "=COUNTIF(INDIRECT(TEXT(CONCATENATE(ADDRESS(ROW(),8,3),\":\",ADDRESS(ROW(),31,3)),1)),\"Q\")",
         }
     }
 
@@ -393,8 +439,6 @@ function populateAO(bdAttendance: BD_ATTENDANCE_MAP, userMap, ao: AO, sheet: Goo
     var peopleAdded = 0
     var data = sheet.getDataRange().getValues();
     var dataLength = data.length
-
-    var aoFormulas = statFormulaFromAO(ao)
 
     bdAttendance.forEach((x, key) => {
         if (x.find(xx => xx.ao == ao.channelId)) {
@@ -408,14 +452,16 @@ function populateAO(bdAttendance: BD_ATTENDANCE_MAP, userMap, ao: AO, sheet: Goo
             }
 
             if (!row) {
+                var aoFormulas = statFormulaFromAO(ao, rowNum)
+
                 sheet.getRange(rowNum, 1, 1, 6)
                     .setValues([[
                         key,
-                        userMap.get(key),
+                        userMap.get(key) ? userMap.get(key)?.username : "",
                         "",
-                        "",
-                        aoFormulas ? aoFormulas[8].replaceAll("3", rowNum) : "",
-                        aoFormulas ? aoFormulas[2].replaceAll("3", rowNum) : ""
+                        aoFormulas ? aoFormulas["q"] : "",
+                        aoFormulas ? aoFormulas[8] : "",
+                        aoFormulas ? aoFormulas[2] : ""
                     ]])
             }
         }
@@ -425,10 +471,17 @@ function populateAO(bdAttendance: BD_ATTENDANCE_MAP, userMap, ao: AO, sheet: Goo
             var col = data[0].indexOf(bb.date);
 
             if (col != -1) {
-                sheet.getRange(rowNum, col + 1)
-                    .setValues([[
-                        "X"
-                    ]])
+                if (bb.qUser == bb.user) {
+                    sheet.getRange(rowNum, col + 1)
+                        .setValues([[
+                            "Q"
+                        ]]).setHorizontalAlignment("center")
+                } else {
+                    sheet.getRange(rowNum, col + 1)
+                        .setValues([[
+                            "X"
+                        ]]).setHorizontalAlignment("center")
+                }
             }
         })
     })
@@ -444,7 +497,6 @@ function populateAttendance(): void {
     populateRegion(bdAttendance, userMap, aoMap)
 
     aoMap.forEach((val, key) => {
-        Logger.log("Here is the AO map")
         var sheet = spreadsheet.getSheetByName(val.friendlyName)
 
         if (sheet) {
