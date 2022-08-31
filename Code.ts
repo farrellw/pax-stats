@@ -125,7 +125,7 @@ function hideShowPax(): void {
                 var userId = d[0]
                 var user = userMap.get(userId)
                 if (user) {
-                    if (user.include && index > 1) {
+                    if (!user.include && index > 1) {
                         x.hideRows(index + 1)
                     } else {
                         x.showRows(index + 1)
