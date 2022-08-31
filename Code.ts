@@ -16,6 +16,10 @@ function onOpen() {
         {
             name: "Sort",
             functionName: "sortAll"
+        },
+        {
+            name: "Hide/Show",
+            functionName: "hideShowPax"
         }
     ];
     spreadsheet.addMenu("F3", menus);
@@ -109,6 +113,28 @@ function refreshUserList() {
 
     results.close();
     stmt.close();
+}
+
+function hideShowPax(): void {
+    var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    var userMap = retrieveUserMap();
+    spreadsheet.getSheets().forEach(x => {
+        if (x.getName() != "USER" && x.getName() != "AOs") {
+            var data = x.getDataRange().getValues();
+            data.forEach((d, index) => {
+                var userId = d[0]
+                var user = userMap.get(userId)
+                if (user) {
+                    if (user.include && index > 1) {
+                        x.hideRows(index + 1)
+                    } else {
+                        x.showRows(index + 1)
+                    }
+                }
+
+            })
+        }
+    })
 }
 
 function setRule(): void {
@@ -326,7 +352,7 @@ function retrieveUserMap(): USER_INFORMATION {
                 realName: currentValue[2],
                 startDate: currentValue[3] ? new Date(currentValue[3]) : null,
                 rowIndex: currentIndex,
-                include: currentValue.length > 4 ? currentValue[4] : false
+                include: currentValue.length > 4 ? currentValue[4] == "YES" : false
             }
             )
 
